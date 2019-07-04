@@ -1,0 +1,24 @@
+{
+    "$314": "interrupt_service_routine_lo",
+    "$315": "interrupt_service_routine_hi",
+    "$d000": "sprite_0_x",
+    "$d001": "sprite_0_y",
+    "$d010": "sprites_x_8_bit",
+    "$d011": "screen_control_register_1",
+    "$d012": "current_raster_line",
+    "$d015": "sprite_enabled_register",
+    "$d016": "screen_control_register_2",
+    "$d017": "sprite_double_height_register",
+    "$d018": "vic_memory_setup_register",
+    "$d019": "interrupt_status_register",
+    "$d01a": "raster_interrupt_control",
+    "$d01d": "sprite_double_width_register",
+    "$d020": "border_color",
+    "$d021": "background_color",
+    "$d022": "extra_background_color_1",
+    "$d027": "sprite_0_color",
+    "$dc0d": "interrupt_control_and_status_register"
+}
+
+
+        

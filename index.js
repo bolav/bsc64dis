@@ -8,10 +8,12 @@ if (!argv._[0]) {
 const filename = argv._[0];
 
 let segments = {
-    data: []
+    data: [],
+    constants: require('./default_constants.json'),
 };
 if (argv.segments) {
     segments = require(argv.segments);
+    segments.constants = segments.constants || require('./default_constants.json');
 }
 const labels = segments.labels ? fixLabels(segments.labels) : {};
 // http://sta.c64.org/cbm64scr.html
@@ -47,13 +49,19 @@ function write_constants() {
         if (key.startsWith('$')) {
             value = parseInt(key.substring(1), 16);
         }
-        output(`.label ${segments.constants[key].name} = $${value.toString(16)}`);
-        setLabel(value, segments.constants[key].name, 1);
+        if (labels[value] && labels[value].uses) {
+            output(`.label ${segments.constants[key]} = $${value.toString(16)}`);
+        }
+        setLabel(value, segments.constants[key], 1, 1);
     }
 }
 
-function setLabel(addr, name, added) {
+function setLabel(addr, name, added, not_use) {
     if (labels[addr]) {
+        if (!not_use) {
+            // This is not an actual usage
+            labels[addr].uses += 1;
+        }
         return;
     }
     name = name || 'label' + (Object.keys(labels).length + 1);
@@ -61,6 +69,7 @@ function setLabel(addr, name, added) {
     labels[addr] = {
         name: name,
         added: added,
+        uses: 0
     };
 }
 
@@ -117,26 +126,29 @@ function readAbsValue() {
     return `#$${readByte().toString(16)}`;
 }
 
-function readZeropAddr() {
-    let label = readByte();
-    setLabel(label);
-    label = addressToLabel(label);
-    return `${label}`;
-}
-
-function readIny() {
-    let label = readByte();
-    setLabel(label);
-    label = addressToLabel(label);
-    return `(${label}),y`;
-}
-
-function readAbs(added) {
+function readZeropAddr(added) {
     added = added || '';
-    let label = readWord();
+    let label = readByte();
     setLabel(label);
     label = addressToLabel(label);
     return `${label}${added}`;
+}
+
+function readIn(added) {
+    added = added || '';
+    let label = readByte();
+    setLabel(label);
+    label = addressToLabel(label);
+    return `(${label})${added}`;
+}
+
+function readAbs(added, preadd) {
+    added = added || '';
+    preadd = preadd || '';
+    let label = readWord();
+    setLabel(label);
+    label = addressToLabel(label);
+    return `${preadd}${label}${added}`;
 }
 
 function readRel() {
@@ -158,10 +170,14 @@ function readWriteOpcode() {
     const opCodeStr = opCodes[ocX][ocY];
     const opCodeMatch = opCodeStr.match(/([A-Z]+)[\s\n]+(\w+)/);
     if (!opCodeMatch) {
-        throw 'Unknown opcode ' + opCode + ` (${opCodeStr})`;
+        console.log('// Unknown opcode ' + opCode + ` (${opCodeStr}) $${currentAddr().toString(16)}`);
+        return readWriteBytes(1);
     }
     const opCodeMnem = opCodeMatch[1].toLowerCase();
     const addressing = opCodeMatch[2];
+
+    const addr = currentAddr();
+
     let addressingResult = '';
     if (addressing === 'imm') {
         addressingResult = ' ' + readAbsValue();
@@ -170,27 +186,47 @@ function readWriteOpcode() {
         // pass
     }
     else if (addressing === 'zp') {
-        addressingResult = ' ' + readZeropAddr();
+        addressingResult = readZeropAddr();
+    }
+    else if (addressing === 'zpx') {
+        addressingResult = readZeropAddr(',x');
+    }
+    else if (addressing === 'zpy') {
+        addressingResult = readZeropAddr(',y');
     }
     else if (addressing === 'abx') {
-        addressingResult = ' ' + readAbs(',x');
+        addressingResult = readAbs(',x');
     }
     else if (addressing === 'aby') {
-        addressingResult = ' ' + readAbs(',y');
+        addressingResult = readAbs(',y');
     }
     else if (addressing === 'rel') {
-        addressingResult = ' ' + readRel();
+        addressingResult = readRel();
     }
     else if (addressing === 'abs') {
-        addressingResult = ' ' + readAbs();
+        addressingResult = readAbs();
+    }
+    else if (addressing === 'inx') {
+        addressingResult = readIn(',x');
     }
     else if (addressing === 'iny') {
-        addressingResult = ' ' + readIny();
+        addressingResult = readIn(',y');
+    }
+    else if (addressing === 'ind') {
+        addressingResult = `(${readAbs()})`;
     }
     else {
         console.log(opCode.toString(16));
         console.log(opCodes[ocX][ocY])
         throw 'Unknown addressing ' + addressing + ' ' + currentAddr() + ' $' + currentAddr().toString(16);
+    }
+    if (addressingResult) {
+        // if (labels[addr]) {
+        //     addressingResult = labels[addr].name + ': ' + addressingResult;
+        //     labels[addr].added = 1;
+        // }
+
+        addressingResult = ' ' + addressingResult;
     }
     output(`\t${opCodeMnem}${addressingResult}`);
     // console.log(`.byte $${opCode.toString(16)}`);

@@ -221,10 +221,10 @@ function readWriteOpcode() {
         throw 'Unknown addressing ' + addressing + ' ' + currentAddr() + ' $' + currentAddr().toString(16);
     }
     if (addressingResult) {
-        // if (labels[addr]) {
-        //     addressingResult = labels[addr].name + ': ' + addressingResult;
-        //     labels[addr].added = 1;
-        // }
+        if (labels[addr]) {
+            addressingResult = labels[addr].name + ': ' + addressingResult;
+            labels[addr].added = 1;
+        }
 
         addressingResult = ' ' + addressingResult;
     }
@@ -259,7 +259,7 @@ function disassemble() {
     readStartAddress();
     readBasicStart();
     while (pos < binary.length) {
-        // console.log(currentPos(), pos, binary[pos]);
+        // console.log(currentAddr(), pos, binary[pos]);
         const addr = currentAddr();
         if (labels[addr]) {
             output(labels[addr].name + ':  // $' + addr.toString(16));
@@ -274,12 +274,16 @@ function disassemble() {
             if (addr === seg.from && seg.type === 'all') {
                 readWriteBytes(seg.to - seg.from + 1);
                 found = true;
+                break;
             } else if (addr === seg.from && seg.type === 'text') {
+                output('.encoding "screencode_upper"');
                 readWriteText(seg.to - seg.from + 1);
                 found = true;
+                break;
             } else if (addr >= seg.from && addr <= seg.to) {
                 readWriteBytes(1);
                 found = true;
+                break;
             }
         }
         if (!found) {

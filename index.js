@@ -7,18 +7,21 @@ if (!argv._[0]) {
 }
 const filename = argv._[0];
 
+let constants = require('./default_constants.json');
 let segments = {
     data: [],
-    constants: require('./default_constants.json'),
 };
 if (argv.segments) {
     segments = require(argv.segments);
-    segments.constants = segments.constants || require('./default_constants.json');
+    if (segments.constants) {
+        constants = {...constants, ...segments.constants};
+    }
 }
 const labels = segments.labels ? fixLabels(segments.labels) : {};
 // http://sta.c64.org/cbm64scr.html
 const bytesToText = require('./c64screen.json');
 
+let registers = {};
 let pos = 0;
 let startAddr = 0;
 let writeOutput = 1;
@@ -44,15 +47,15 @@ function output(str) {
 }
 
 function write_constants() {
-    for (const key in segments.constants) {
+    for (const key in constants) {
         let value = key;
         if (key.startsWith('$')) {
             value = parseInt(key.substring(1), 16);
         }
         if (labels[value] && labels[value].uses) {
-            output(`.label ${segments.constants[key]} = $${value.toString(16)}`);
+            output(`.label ${constants[key]} = $${value.toString(16)}`);
         }
-        setLabel(value, segments.constants[key], 1, 1);
+        setLabel(value, constants[key], 1, 1);
     }
 }
 
@@ -73,8 +76,44 @@ function setLabel(addr, name, added, not_use) {
     };
 }
 
+function assertClosest(addr) {
+    let name = labels[addr].name;
+    const diff = Math.abs(addr - currentAddr());
+
+    if (currentAddr() > addr) {
+        name = name + '-';
+    } else if (currentAddr() < addr) {
+        name = name + '+';
+    }
+
+    for (let label_addr in labels) {
+        const label_diff = Math.abs(label_addr - currentAddr());
+        let label_name = labels[label_addr].name;
+        if (currentAddr() > label_addr) {
+            label_name = label_name + '-';
+        } else if (currentAddr() < label_addr) {
+            label_name = label_name + '+';
+        }
+
+        if (addr != label_addr && name === label_name && label_diff < diff) {
+            throw "Duplicate label " + labels[addr].name;
+        }
+    }
+}
+
 function addressToLabel(addr) {
     if (labels[addr] && labels[addr].added) {
+        if (labels[addr].name.substring(0,1) === '!') {
+            assertClosest(addr);
+            if (currentAddr() > addr) {
+                return labels[addr].name + '-';
+            } else if (currentAddr() < addr)  {
+                return labels[addr].name + '+';
+            } else {
+                throw "Cannot jump to current with local addr";
+            }
+            throw "Local label not supported";
+        }
         return labels[addr].name;
     }
     return `$${addr.toString(16)}`;
@@ -162,6 +201,56 @@ function readRel() {
     return `${label}`;
 }
 
+function setRegisters(opcode, addressing, address) {
+    registers = {}
+    if (opcode === 'lda' && addressing === 'imm') {
+        registers['A'] = address;
+    }
+}
+
+function getComment(opcode, addressing, address) {
+    // console.log(`getComment(${opcode}, ${addressing}, ${address})`, registers);
+    if (opcode === 'sta' && addressing == 'abs' && address === 'VIC_MEMORY_SETUP_REGISTER' && registers['A']) {
+        const register = parseInt(registers['A'].substring(2), 16);
+        const screenmem = ((register & 0b11110000) >> 4) * 0x400;
+        const bitmap = ((register & 0b00001000) >> 3) * 0x2000;
+        const charmem = ((register & 0b00001110) >> 1) * 0x800;
+        return `Set Screen Addresses : screenmem $${screenmem.toString(16)}, bitmap $${bitmap.toString(16)}, charmem $${charmem.toString(16)}`;
+    } else if (opcode === 'sta' && addressing == 'abs' && address === 'VIC_SCREEN_CONTROL_REGISTER_1' && registers['A']) {
+        const register = parseInt(registers['A'].substring(2), 16);
+        const vert_scroll = (register & 0b111);
+        const screen_height = 24 + ((register & 0b1000) >> 3);
+        const on_off = (register & 0b10000) ? 'on' : 'off';
+        const text_bitmap = (register & 0b100000) ? 'bitmap' : 'text';
+        const extended = (register & 0b1000000) ? 'on' : 'off';
+        const bit8raster = (register & 0b10000000) >> 7;
+        return `vertical scroll ${vert_scroll}, screen height ${screen_height}, set screen ${on_off}, ${text_bitmap} mode, extended background mode ${extended}, bit 8 raster line interrupt ${bit8raster}`;
+    } else if (opcode === 'sta' && addressing == 'abs' && address === 'VIC_SCREEN_CONTROL_REGISTER_2' && registers['A']) {
+        const register = parseInt(registers['A'].substring(2), 16);
+        const screen_width = 38 + ((register & 0b1000) >> 2);
+        return `screen_width ${screen_width}`;
+    } else if (opcode === 'sta' && addressing == 'abs' && address === 'VIC_RASTER_INTERRUPT_CONTROL' && registers['A']) {
+        const register = parseInt(registers['A'].substring(2), 16);
+        const raster = (register & 0b1) ? 'enabled' : 'disabled';
+        const sprite_background = (register & 0b10) ? 'enabled' : 'disabled';
+        const sprite_sprite = (register & 0b100) ? 'enabled' : 'disabled';
+        const light_pen = (register & 0b1000) ? 'enabled' : 'disabled';
+        return `Raster interrupt ${raster}, Sprite-background collision interrupt ${sprite_background}, Sprite-sprite collision interrupt ${sprite_sprite}, Light pen interrupt ${light_pen}`;
+    } else if (opcode === 'sta' && addressing == 'abs' && address === 'INTERRUPT_CONTROL_AND_STATUS_REGISTER' && registers['A']) {
+        const register = parseInt(registers['A'].substring(2), 16);
+        const interrupts = [];
+        const fill_bit = (register & 0b1000000) ? 'Enable' : 'Disable';
+        if (register & 0b1) { interrupts.push(fill_bit + ' timer A underflow'); }
+        if (register & 0b10) { interrupts.push(fill_bit + ' timer B underflow'); }
+        if (register & 0b100) { interrupts.push(fill_bit + ' TOD alarm interrupt'); }
+        if (register & 0b1000) { interrupts.push(fill_bit + ' byte received/sent via serial shift'); }
+        if (register & 0b10000) { interrupts.push(fill_bit + ' postive FLAG'); }
+        return interrupts.join(', ');
+    }
+
+    return '';
+}
+
 function readWriteOpcode() {
     const opCode = readByte();
     const ocX = Math.floor(opCode / 16) + 1;
@@ -179,8 +268,9 @@ function readWriteOpcode() {
     const addr = currentAddr();
 
     let addressingResult = '';
+    let comment = '';
     if (addressing === 'imm') {
-        addressingResult = ' ' + readAbsValue();
+        addressingResult = readAbsValue();
     }
     else if (addressing === 'imp' || addressing === 'akk') {
         // pass
@@ -220,6 +310,8 @@ function readWriteOpcode() {
         console.log(opCodes[ocX][ocY])
         throw 'Unknown addressing ' + addressing + ' ' + currentAddr() + ' $' + currentAddr().toString(16);
     }
+    comment = getComment(opCodeMnem, addressing, addressingResult);
+    setRegisters(opCodeMnem, addressing, addressingResult);
     if (addressingResult) {
         if (labels[addr]) {
             addressingResult = labels[addr].name + ': ' + addressingResult;
@@ -228,7 +320,10 @@ function readWriteOpcode() {
 
         addressingResult = ' ' + addressingResult;
     }
-    output(`\t${opCodeMnem}${addressingResult}`);
+    if (comment) {
+        comment = ' // ' + comment;
+    }
+    output(`\t${opCodeMnem}${addressingResult}${comment}`);
     // console.log(`.byte $${opCode.toString(16)}`);
 }
 
